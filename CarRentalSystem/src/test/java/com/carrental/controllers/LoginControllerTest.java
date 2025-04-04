@@ -13,8 +13,7 @@ import javafx.application.Platform;
 import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
 import javafx.stage.Stage;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.mockito.MockedStatic;
 import org.testfx.framework.junit5.ApplicationTest;
 
@@ -28,15 +27,19 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 public class LoginControllerTest extends ApplicationTest {
+
 	private LoginController controller;
+	private Connection mockConn;
+	private PreparedStatement mockStmt;
+	private ResultSet mockRs;
+	private MockedStatic<DatabaseConnection> staticDB;
 
 	@Override
 	public void start(Stage stage) {
-		// Required for JavaFX thread initialization
 	}
 
 	@BeforeEach
-	void setUp() {
+	void setUp() throws Exception {
 		controller = new LoginController();
 		controller.usernameField = new TextField();
 		controller.passwordField = new PasswordField();
@@ -45,6 +48,21 @@ public class LoginControllerTest extends ApplicationTest {
 		controller.logoImage = new ImageView();
 		controller.userErrorLabel.setVisible(false);
 		controller.passwordErrorLabel.setVisible(false);
+
+		mockConn = mock(Connection.class);
+		mockStmt = mock(PreparedStatement.class);
+		mockRs = mock(ResultSet.class);
+
+		when(mockConn.prepareStatement(anyString())).thenReturn(mockStmt);
+		when(mockStmt.executeQuery()).thenReturn(mockRs);
+
+		staticDB = mockStatic(DatabaseConnection.class);
+		staticDB.when(DatabaseConnection::getConnection).thenReturn(mockConn);
+	}
+
+	@AfterEach
+	void tearDown() {
+		staticDB.close();
 	}
 
 	@Test
@@ -57,26 +75,17 @@ public class LoginControllerTest extends ApplicationTest {
 		controller.usernameField.setText("wronguser");
 		controller.passwordField.setText("wrongpass");
 
-		try (MockedStatic<DatabaseConnection> mockedDB = mockStatic(DatabaseConnection.class)) {
-			Connection mockConn = mock(Connection.class);
-			PreparedStatement mockStmt = mock(PreparedStatement.class);
-			ResultSet mockRs = mock(ResultSet.class);
+		when(mockRs.next()).thenReturn(false);
 
-			when(mockConn.prepareStatement(anyString())).thenReturn(mockStmt);
-			when(mockStmt.executeQuery()).thenReturn(mockRs);
-			when(mockRs.next()).thenReturn(false);
-			mockedDB.when(DatabaseConnection::getConnection).thenReturn(mockConn);
+		CountDownLatch latch = new CountDownLatch(1);
+		Platform.runLater(() -> {
+			controller.handleLogin();
+			latch.countDown();
+		});
+		latch.await();
 
-			CountDownLatch latch = new CountDownLatch(1);
-			Platform.runLater(() -> {
-				controller.handleLogin();
-				latch.countDown();
-			});
-			latch.await();
-
-			assertTrue(controller.userErrorLabel.isVisible());
-			assertTrue(controller.passwordErrorLabel.isVisible());
-		}
+		assertTrue(controller.userErrorLabel.isVisible());
+		assertTrue(controller.passwordErrorLabel.isVisible());
 	}
 
 	@Test
@@ -84,31 +93,21 @@ public class LoginControllerTest extends ApplicationTest {
 		controller.usernameField.setText("validuser");
 		controller.passwordField.setText("validpass");
 
-		try (MockedStatic<DatabaseConnection> mockedDB = mockStatic(DatabaseConnection.class)) {
-			Connection mockConn = mock(Connection.class);
-			PreparedStatement mockStmt = mock(PreparedStatement.class);
-			ResultSet mockRs = mock(ResultSet.class);
+		when(mockRs.next()).thenReturn(true);
+		when(mockRs.getString("password")).thenReturn(controller.hashPassword("validpass"));
+		when(mockRs.getInt("user_id")).thenReturn(999);
+		when(mockRs.getString("role")).thenReturn("Alien");
+		when(mockRs.getString("email")).thenReturn("alien@mock.com");
+		when(mockRs.getTimestamp("created_at")).thenReturn(new Timestamp(System.currentTimeMillis()));
 
-			when(mockConn.prepareStatement(anyString())).thenReturn(mockStmt);
-			when(mockStmt.executeQuery()).thenReturn(mockRs);
-			when(mockRs.next()).thenReturn(true);
-			when(mockRs.getString("password")).thenReturn(controller.hashPassword("validpass"));
-			when(mockRs.getInt("user_id")).thenReturn(2);
-			when(mockRs.getString("role")).thenReturn("Alien");
-			when(mockRs.getString("email")).thenReturn("test@example.com");
-			when(mockRs.getTimestamp("created_at")).thenReturn(new Timestamp(System.currentTimeMillis()));
+		CountDownLatch latch = new CountDownLatch(1);
+		Platform.runLater(() -> {
+			controller.handleLogin();
+			latch.countDown();
+		});
+		latch.await();
 
-			mockedDB.when(DatabaseConnection::getConnection).thenReturn(mockConn);
-
-			CountDownLatch latch = new CountDownLatch(1);
-			Platform.runLater(() -> {
-				controller.handleLogin();
-				latch.countDown();
-			});
-			latch.await();
-
-			assertTrue(controller.userErrorLabel.isVisible());
-		}
+		assertTrue(controller.userErrorLabel.isVisible());
 	}
 
 	@Test
@@ -140,5 +139,28 @@ public class LoginControllerTest extends ApplicationTest {
 		String password = "MySecurePassword@123";
 		String hashed = controller.hashPassword(password);
 		assertEquals(hashed, controller.hashPassword(password));
+	}
+
+	@Test
+	void testHandleLoginWithWrongPassword() throws Exception {
+		controller.usernameField.setText("admin");
+		controller.passwordField.setText("wrongpass");
+
+		when(mockRs.next()).thenReturn(true);
+		when(mockRs.getString("password")).thenReturn(controller.hashPassword("correctpass"));
+		when(mockRs.getInt("user_id")).thenReturn(102);
+		when(mockRs.getString("role")).thenReturn("Admin");
+		when(mockRs.getString("email")).thenReturn("admin@example.com");
+		when(mockRs.getTimestamp("created_at")).thenReturn(new Timestamp(System.currentTimeMillis()));
+
+		CountDownLatch latch = new CountDownLatch(1);
+		Platform.runLater(() -> {
+			controller.handleLogin();
+			latch.countDown();
+		});
+		latch.await();
+
+		assertTrue(controller.userErrorLabel.isVisible());
+		assertTrue(controller.passwordErrorLabel.isVisible());
 	}
 }
